@@ -1,77 +1,87 @@
-# lw-aws-inventory container
+# FortiCNAPP AWS Inventory — Container Image
 
-A minimal Docker image that runs [`lw_aws_inventory.sh`](lw_aws_inventory.sh) — the
-FortiCNAPP AWS license vCPU sizing script — with **AWS CLI v2** and **jq** baked in.
-
-No local install of AWS CLI or jq required. Just Docker + AWS credentials.
+Runs [`lw_aws_inventory.sh`](lw_aws_inventory.sh) inside Docker.  
+**AWS CLI v2** and **jq** are baked into the image — nothing to install on your machine except Docker.
 
 ---
 
-## What's inside the image
+## Prerequisites
 
-| Component | Version | Purpose |
-|-----------|---------|---------|
-| debian:bookworm-slim | latest | Base OS |
-| AWS CLI | v2 (latest) | Required by the script |
-| jq | latest | Required by the script |
-| bash | system | Required to run the script |
-| lw_aws_inventory.sh | latest | The sizing script |
+| Requirement | How to get it |
+|-------------|--------------|
+| Docker | https://docs.docker.com/get-docker/ |
+| AWS credentials | Access key + secret **or** an IAM role |
 
-> Runs as a non-root user (`scanner`, UID 1000).  
-> Supports both `amd64` and `arm64` (Apple Silicon / AWS Graviton).
+> No AWS CLI, no jq, no bash — all included in the image.
 
 ---
 
-## ⚠️ AWS Credentials Required
-
-The container calls live AWS APIs. Pass credentials via environment variables:
+## Step 1 — Clone this repo
 
 ```bash
--e AWS_ACCESS_KEY_ID=AKIAxxxxxxxxxxxxxxxxx
--e AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
--e AWS_DEFAULT_REGION=us-east-1
+git clone https://github.com/svuillaume/container_images.git
+cd container_images/lw-aws-inventory
 ```
 
-Or mount your `~/.aws` directory (for named profiles):
-
-```bash
--v ~/.aws:/home/scanner/.aws:ro
-```
-
-Or use an **IAM Instance Role / ECS Task Role / IRSA** — credentials are picked up
-automatically with no extra flags.
-
 ---
 
-## Quick Start
-
-### Build locally
+## Step 2 — Build the image
 
 ```bash
-cd lw-aws-inventory
 docker build -t lw-aws-inventory .
 ```
 
-### Run — default credentials, all regions
+> ⏱ First build takes ~2 minutes — it downloads and installs AWS CLI v2.  
+> Subsequent builds use the Docker cache and are instant.  
+> Works on both **Intel (amd64)** and **Apple Silicon / AWS Graviton (arm64)**.
+
+---
+
+## Step 3 — Set your AWS credentials
+
+The container needs valid AWS credentials to call AWS APIs.  
+Choose **one** of the following methods:
+
+### Option A — Environment variables (most common)
+
+```bash
+export AWS_ACCESS_KEY_ID=AKIAxxxxxxxxxxxxxxxx
+export AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+### Option B — Named AWS profile (uses your ~/.aws config)
+
+No export needed — just pass your profile name with `-p` in Step 4.
+
+### Option C — IAM role (ECS / EC2 / EKS)
+
+No credentials needed — the container picks them up automatically.
+
+---
+
+## Step 4 — Run the scan
+
+### Single account — all regions
 
 ```bash
 docker run --rm \
-  -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-  -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
-  -e AWS_DEFAULT_REGION=us-east-1 \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
+  -e AWS_DEFAULT_REGION \
   lw-aws-inventory
 ```
 
-### Run — specific regions (faster)
+### Single account — specific regions (faster, recommended)
 
 ```bash
 docker run --rm \
-  -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-  -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
   lw-aws-inventory -r us-east-1,us-west-2,eu-west-1
 ```
 
-### Run — named profile (mount ~/.aws)
+### Named AWS profile
 
 ```bash
 docker run --rm \
@@ -79,58 +89,117 @@ docker run --rm \
   lw-aws-inventory -p myprofile -r us-east-1
 ```
 
-### Run — entire AWS Organization
+### Entire AWS Organization (all accounts, all OUs)
 
 ```bash
 docker run --rm \
-  -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-  -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
   lw-aws-inventory -o OrganizationAccountAccessRole
 ```
 
-### Save CSV output to a file
+> Replace `OrganizationAccountAccessRole` with your actual cross-account role name  
+> (e.g. `AWSControlTowerExecution` for Control Tower environments).
+
+### One specific account within an organization
 
 ```bash
 docker run --rm \
-  -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-  -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
+  lw-aws-inventory -o OrganizationAccountAccessRole -a 123456789012
+```
+
+---
+
+## Step 5 — Save the results
+
+### Save CSV to a file
+
+```bash
+docker run --rm \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
   lw-aws-inventory --output csv > results.csv
 ```
 
-### Show help
+### Summary only (no CSV)
 
 ```bash
-docker run --rm lw-aws-inventory --help
+docker run --rm \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
+  lw-aws-inventory --output summary
+```
+
+---
+
+## What the output looks like
+
+```
+"Profile","Account ID","Regions","EC2 Instances","EC2 vCPUs","ECS Fargate Clusters",
+"ECS Fargate Running Tasks","ECS Fargate CPU Units","ECS Fargate License vCPUs",
+"Lambda Functions (not used for licensing)","Total vCPUs"
+"","123456789012","us-east-1|us-west-2","42","168","3","12","6144","6","25","174"
+
+######################################################################
+  FortiCNAPP inventory collection complete  (87s)
+######################################################################
+
+  Accounts Analyzed      : 1
+
+  EC2
+  ─────────────────────────────────
+  Instances              : 42
+  vCPUs                  : 168
+
+  ECS Fargate
+  ─────────────────────────────────
+  Clusters               : 3
+  Running Tasks          : 12
+  License vCPUs          : 6
+
+  License Estimate
+  ─────────────────────────────────
+    EC2 vCPUs            : 168
+  + ECS Fargate vCPUs   : 6
+  ─────────────────────────────────
+  = Total vCPUs           : 174      ← this number goes to FortiCNAPP for sizing
 ```
 
 ---
 
 ## All flags
 
-| Flag | Description |
-|------|-------------|
-| `-r REGIONS` | Comma-separated regions, e.g. `us-east-1,us-west-2` |
-| `-p PROFILE` | AWS CLI profile name |
-| `-o ROLE` | Cross-account role for AWS Organization scan |
-| `-a ACCOUNT_ID` | Scan one account within an org (requires `-o`) |
-| `-g FILE` | Generate a per-account script instead of running |
-| `--output FORMAT` | `all` (default) \| `csv` \| `summary` \| `csvnoheader` |
-| `-h` | Show help |
+| Flag | Description | Example |
+|------|-------------|---------|
+| `-r REGIONS` | Limit scan to specific regions | `-r us-east-1,eu-west-1` |
+| `-p PROFILE` | Use a named AWS CLI profile | `-p production` |
+| `-o ROLE` | Cross-account role for org scanning | `-o OrganizationAccountAccessRole` |
+| `-a ACCOUNT_ID` | Scan one account in an org (needs `-o`) | `-a 123456789012` |
+| `--output FORMAT` | Output format | `--output csv` |
+| `-g FILE` | Generate a per-account script | `-g scan.sh` |
+| `-h` | Show help | |
+
+**Output formats:** `all` (default — CSV + summary) · `csv` · `summary` · `csvnoheader`
 
 ---
 
-## Environment variables
+## Troubleshooting
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `AWS_ACCESS_KEY_ID` | Yes (or role) | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | Yes (or role) | AWS secret key |
-| `AWS_SESSION_TOKEN` | If using STS | Temporary session token |
-| `AWS_DEFAULT_REGION` | Recommended | Default region for API calls |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Could not resolve account ID` | No AWS credentials passed | Add `-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY` |
+| `ExpiredToken` | Temporary credentials expired | Re-export fresh credentials and re-run |
+| `AccessDenied` on assume-role | Cross-account role not configured | Check the role's trust policy allows your account |
+| All counts show 0 | Credentials valid but wrong region | Add `-r` with the regions where your workloads run |
+| `ERROR: No access to region X` | Region disabled in your account | Normal — use `-r` to skip disabled regions |
 
 ---
 
 ## IAM Permissions Required
+
+Minimum policy for the AWS identity running the scan:
 
 ```json
 {
@@ -153,4 +222,28 @@ docker run --rm lw-aws-inventory --help
 }
 ```
 
-Add `organizations:ListAccounts` and `sts:AssumeRole` for organization scanning.
+For **AWS Organization scanning**, also add:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "organizations:ListAccounts",
+    "sts:AssumeRole"
+  ],
+  "Resource": "*"
+}
+```
+
+---
+
+## What's inside the image
+
+| Component | Details |
+|-----------|---------|
+| Base OS | `debian:bookworm-slim` |
+| AWS CLI | v2 — latest at build time |
+| jq | latest from apt |
+| bash | system |
+| User | `scanner` (non-root, UID 1000) |
+| Architectures | `amd64` (Intel/AMD) · `arm64` (Apple Silicon, AWS Graviton) |
